@@ -66,6 +66,9 @@ object Driver {
   def parseConf[T <: TBase[_, _]: Manifest: ClassTag](confPath: String): T =
     ThriftJsonCodec.fromJsonFile[T](confPath, check = false)
 
+  private[spark] def onlineProps(metaData: api.MetaData, props: Map[String, String]): Map[String, String] =
+    metaData.commonConf ++ props
+
   trait SharedSubCommandArgs {
     this: ScallopConf =>
     val isGcp: ScallopOption[Boolean] =
@@ -612,10 +615,12 @@ object Driver {
       "ENABLE_UPLOAD_CLIENTS" -> enableUploadClients.toOption.getOrElse("true")
     )
 
-    lazy val api: Api = isGcp.toOption match {
-      case Some(true) => impl(serializableProps ++ gcpMap)
-      case _          => impl(serializableProps)
+    def apiForProps(props: Map[String, String]): Api = isGcp.toOption match {
+      case Some(true) => impl(props ++ gcpMap)
+      case _          => impl(props)
     }
+
+    lazy val api: Api = apiForProps(serializableProps)
 
     lazy val fetchContext: FetchContext =
       FetchContext(api.genKvStore, MetadataDataset)
@@ -694,7 +699,7 @@ object Driver {
         s"Triggering bulk load for GroupBy: ${groupByName} for partition: ${args.partitionString()} " +
           s"from table: ${offlineTable} using ${uploader}")
 
-      val kvStore = args.api.genKvStore
+      val kvStore = args.apiForProps(onlineProps(groupByConf.metaData, args.serializableProps)).genKvStore
 
       try {
         // The kvStore implementation will handle different warehouse types based on the configuration
